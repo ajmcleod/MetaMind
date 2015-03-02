@@ -1,12 +1,17 @@
+#!/usr/bin/env python 
 
+import theano
+import theano.tensor as T
+import numpy as np
 
-    if random_seed == None:                                                        
-              rand = T.shared_randomstreams.RandomStreams(np.random.randint(999999))       
-                  else:                                                                          
-                            rand = T.shared_randomstreams.RandomStreams(random_seed)                     
-                                if rms_injection_rate == None:                                                 
-                                          rms_injection_rate = 1 - rms_decay_rate                                      
-                                              masked_train_set_X = train_set_X * rand.binomial(n=1, p=1-dropout, size=(batch_size, self.num_features)).eval()
-                                                                                                                                 
-                                                                                                                                     dropout_layer = dropout                                                        
-                                                                                                                                     
+class dropout_layer:
+
+  def __init__(self, input, random_seed = None):
+    if random_seed == None:
+      self.rand = T.shared_randomstreams.RandomStreams(np.random.randint(999999))
+    else:
+      self.rand = T.shared_randomstreams.RandomStreams(random_seed)
+    self.input = input
+
+  def output(self, dropout):
+    return input * self.rand.binomial(n = 1, p = 1 - dropout, size = input.shape)
