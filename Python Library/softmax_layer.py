@@ -8,55 +8,93 @@ import itertools
 class softmax_layer:
   _ids = itertools.count(1)
 
-  def __init__(self, inputs, num_features, num_classes, trng, training_labels = None, learning_rate = 0.1, batch_size = None, num_train_examples = None, reg_strength = None, rms_decay_rate = None, rms_injection_rate = None, dropout_prob = 0.5, W = None, b = None):
+  def __init__(self, X_var, y_var, X_values, y_values, trng, training_options = None, W = None, b = None):
     self.layer_id = self._ids.next()
 
-    if W == None:
-      self.W = theano.shared(trng.uniform(low = - np.sqrt(6. / (num_features + num_classes)), high = np.sqrt(6. / (num_features + num_classes)), size = (num_features, num_classes)).eval())
-    else:
-      self.W = theano.shared(W, borrow=True)
-
-    if b == None:
-      self.b = theano.shared(np.zeros((num_classes,)))
-    else:
-      self.b = theano.shared(b, borrow=True)
-
-    self.inputs        = inputs
-    self.num_features  = num_features
-    self.num_classes   = num_classes
-    self.trng          = trng
-    self.output        = T.argmax(T.nnet.softmax(T.dot(self.inputs, self.W) + self.b), axis = 1)
-
-    if training_labels != None:
-      self.set_training_parameters(training_labels = training_labels, reg_strength = reg_strength, rms_decay_rate = rms_decay_rate, rms_injection_rate = rms_injection_rate, dropout_prob = dropout_prob, learning_rate = learning_rate, batch_size = batch_size, num_train_examples = num_train_examples, reset_gradient_sums = True)
+    self.X    = X_var
+    self.y    = y_var
+    self.trng = trng
+    self.W    = None
+    self.b    = None
+    self.initialize_softmax_values(X_values, y_values, W, b)
+    self.set_training_parameters(training_options)
+    self.train_accuracy = T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(X_values, self.W) + self.b), axis = 1), y_values))
 
     print 'Softmax %i initialized' % (self.layer_id)
 
-  def set_training_parameters(self, training_labels, reg_strength, rms_decay_rate, rms_injection_rate, dropout_prob = 0.5, learning_rate = 0.1, batch_size = None, num_train_examples = None, reset_gradient_sums = False):
+  #######################################################################################################################
 
-    if reset_gradient_sums:
+  def set_training_parameters(self, training_options):
+
+    if 'reset_gradient_sums' in training_options and training_options['reset_gradient_sums']:
       self.W_gradient_sums = theano.shared(1e-8 * np.ones((self.num_features, self.num_classes)), borrow=True)
       self.b_gradient_sums = theano.shared(1e-8 * np.ones((self.num_classes,)), borrow=True)
+    if 'reset_gradient_velocities' in training_options and training_options['reset_gradient_velocities']:
+      self.W_gradient_velocity = theano.shared(np.zeros((self.num_features, self.num_classes)), borrow=True)
+      self.b_gradient_velocity = theano.shared(np.zeros((self.num_classes,)), borrow = True)
 
-    current_dropout_prob = dropout_prob
-    if not isinstance(batch_size, int):
-      print 'Variable batch_size needed to set up training environment when dropout_prob > 0. Proceeding with dropout_prob = 0.0 in softmax %i.' % (self.layer_id)
-      current_dropout_prob = 0.0
+    learning_rate = training_options['learning_rate']
+    dropout_prob  = training_options['dropout_prob']
+    batch_size    = training_options['batch_size']
+    reg_strength  = training_options['reg_strength']
+    rms_decay_rate = training_options['rms_decay_rate']
+    rms_injection_rate = training_options['rms_injection_rate']
 
-    if current_dropout_prob > 0.0:
-      dropout_mask                 = self.trng.binomial(n = 1, p = 1 - current_dropout_prob, size=(batch_size, self.num_features)) / current_dropout_prob
-      log_likelihoods              = T.log(T.nnet.softmax(T.dot(dropout_mask[:self.inputs.shape[0]] * self.inputs, self.W) + self.b))
-      self.negative_log_likelihood = - T.mean(log_likelihoods[T.arange(training_labels.shape[0]),training_labels])
+    if dropout_prob > 0.0:
+      dropout_mask                      = self.trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.num_features)) / dropout_prob
+      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(dropout_mask[:self.X.shape[0]] * self.X, self.W) + self.b))
     else:
-      log_likelihoods              = T.log(T.nnet.softmax(T.dot(self.inputs, self.W) + self.b))
-      self.negative_log_likelihood = - T.mean(log_likelihoods[T.arange(training_labels.shape[0]),training_labels])
+      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(self.X, self.W) + self.b))
+    self.masked_negative_log_likelihood = - T.mean(masked_log_likelihood[T.arange(self.y.shape[0]),self.y])
 
-    self.diff=theano.shared(np.zeros((1000,50)))
-    g_W = T.grad(cost=self.negative_log_likelihood, wrt=self.W)
-    g_b = T.grad(cost=self.negative_log_likelihood, wrt=self.b)
-    self.parameter_updates = [(self.W, self.W - learning_rate * g_W / T.sqrt(self.W_gradient_sums + T.sqr(g_W)) - reg_strength * self.W),
-                              (self.b, self.b - learning_rate * g_b / T.sqrt(self.b_gradient_sums + T.sqr(g_b)) - reg_strength * self.b),
-                              (self.W_gradient_sums, rms_decay_rate * self.W_gradient_sums + rms_injection_rate * T.sqr(g_W)),
-                              (self.b_gradient_sums, rms_decay_rate * self.b_gradient_sums + rms_injection_rate * T.sqr(g_b)), (self.diff, dropout_mask)]
-    
+    g_W = T.grad(cost=self.masked_negative_log_likelihood, wrt=self.W)
+    g_b = T.grad(cost=self.masked_negative_log_likelihood, wrt=self.b)
 
+    if 'use_nesterov_momentum' in training_options and training_options['use_nesterov_momentum']:
+      if 'momentum_decay_rate' in training_options:
+        momentum_decay_rate = training_options['momentum_decay_rate']
+      else:
+        momentum_decay_rate = 0.9
+      W_update = self.W_gradient_velocity * momentum_decay_rate**2 - (1 + momentum_decay_rate) * learning_rate * g_W
+      b_update = self.b_gradient_velocity * momentum_decay_rate**2 - (1 + momentum_decay_rate) * learning_rate * g_b
+    else:
+      W_update = - learning_rate * g_W
+      b_update = - learning_rate * g_b
+
+    self.parameter_updates = [(self.W, self.W + W_update / T.sqrt(self.W_gradient_sums + T.sqr(g_W)) - reg_strength * self.W),
+                              (self.b, self.b + b_update / T.sqrt(self.b_gradient_sums + T.sqr(g_b)) - reg_strength * self.b),
+                              (self.W_gradient_sums, rms_decay_rate * self.W_gradient_sums + rms_injection_rate * T.sqr(W_update / learning_rate)),
+                              (self.b_gradient_sums, rms_decay_rate * self.b_gradient_sums + rms_injection_rate * T.sqr(b_update / learning_rate))]
+
+    if 'use_nesterov_momentum' in training_options and training_options['use_nesterov_momentum']:
+      self.parameter_updates.append((self.W_gradient_velocity, momentum_decay_rate * self.W_gradient_velocity - learning_rate * g_W))
+      self.parameter_updates.append((self.b_gradient_velocity, momentum_decay_rate * self.b_gradient_velocity - learning_rate * g_b))
+
+
+  #######################################################################################################################
+
+  def initialize_softmax_values(self, X_values, y_values, W, b):
+
+    self.num_features  = X_values.eval().shape[1]
+    self.num_classes   = T.max(y_values).eval() + 1
+
+    if self.W == None:
+      if W == None:
+        self.W = theano.shared(self.trng.uniform(low = - np.sqrt(6. / (self.num_features + self.num_classes)),
+                                                 high = np.sqrt(6. / (self.num_features + self.num_classes)),
+                                                 size = (self.num_features, self.num_classes)).eval(), borrow=True)
+      else:
+        self.W = theano.shared(W, borrow=True)
+
+    if self.b == None:
+      if b == None:
+        self.b = theano.shared(np.zeros((self.num_classes,)), borrow=True)
+      else:
+        self.b = theano.shared(b, borrow=True)
+
+    self.training_cost = - T.mean(T.log(T.nnet.softmax(T.dot(X_values, self.W) + self.b))[T.arange(y_values.shape[0]), y_values])
+
+  #######################################################################################################################
+
+  def predict(self, X_test):
+    return T.argmax(T.nnet.softmax(T.dot(X_test, self.W) + self.b), axis = 1)
