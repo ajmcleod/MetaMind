@@ -4,32 +4,37 @@ import numpy as np
 import theano
 from theano import tensor as T
 import itertools
+from theano_layer import *
 
-class fully_connected_layer:
+class convolution_layer(theano_layer):
   _ids = itertools.count(1)
 
-  def __init__(self, X_var, X_values, num_output_neurons, trng, batch_size, dropout_prob, W = None, b = None):
+  def __init__(self, X_var, X_values, input_shape, stride, depth, trng, batch_size, dropout_prob = None, W = None, b = None):
     self.layer_id = self._ids.next()
 
-    self.W    = None
-    self.b    = None
-    self.trng = trng
-    self.X    = X_var
-    self.num_output_neurons = num_output_neurons
+    self.X            = X_var
+    self.W_shape      = (depth, input_shape[0], stride, stride)
+    self.output_shape = (depth, input_shape[1], input_shape[2])
+    self.border_shift = (stride - 1) // 2
 
-    self.initialize_parameters(X_values, W, b)
+    self.initialize_parameters(W, b)
     self.reset_gradient_sums()
     self.reset_gradient_velocities()
 
-    if dropout_prob > 0.0:
-      if batch_size == None:
-        batch_size = self.num_training_examples
-      self.dropout_mask  = self.trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.num_features)) / dropout_prob
-      self.masked_output = T.nnet.softplus(T.dot(self.X * self.dropout_mask[:self.X.shape[0]], self.W) + self.b)
-    else:
-      self.masked_output = T.nnet.softplus(T.dot(self.X, self.W) + self.b)
+    convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
+                                     filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :,
+                                     self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
 
-    print 'Fully connected layer %i initialized' % (self.layer_id)
+    self.output = convolution + self.b.dimshuffle('x', 0, 'x', 'x')
+
+    if dropout_prob > 0.0:
+      self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
+      self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
+    else:
+      self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'full')[:, :,
+                                                self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
+
+    print 'Convolution Layer %i initialized' % (self.layer_id)
 
   #######################################################################################################################
 
@@ -54,44 +59,5 @@ class fully_connected_layer:
     if use_nesterov_momentum:
       self.parameter_updates.append((self.W_gradient_velocity, momentum_decay_rate * self.W_gradient_velocity - learning_rate * g_W))
       self.parameter_updates.append((self.b_gradient_velocity, momentum_decay_rate * self.b_gradient_velocity - learning_rate * g_b))
-
-  #######################################################################################################################
-
-  def initialize_parameters(self, X_values, W, b):
-
-    self.num_training_examples, self.num_features  = X_values.eval().shape
-
-    if self.W == None:
-      if W == None:
-        self.W = theano.shared(self.trng.uniform(low = - np.sqrt(6. / (self.num_features + self.num_output_neurons)),
-                                                 high = np.sqrt(6. / (self.num_features + self.num_output_neurons)),
-                                                 size = (self.num_features, self.num_output_neurons)).eval(), borrow=True)
-      else:
-        self.W = theano.shared(W, borrow=True)
-
-    if self.b == None:
-      if b == None:
-        self.b = theano.shared(np.zeros((self.num_output_neurons,)), borrow=True)
-      else:
-        self.b = theano.shared(b, borrow=True)
-
-    self.output = T.nnet.softplus(T.dot(X_values, self.W) + self.b)
-
-  #######################################################################################################################
-
-  def predict(self, X_test):
-    return T.nnet.softplus(T.dot(X_test, self.W) + self.b)
-
-  #######################################################################################################################
-
-  def reset_gradient_sums(self):
-    self.W_gradient_sums = theano.shared(1e-8 * np.ones((self.num_features, self.num_output_neurons)), borrow=True)
-    self.b_gradient_sums = theano.shared(1e-8 * np.ones((self.num_output_neurons,)), borrow=True)
-
-  #######################################################################################################################
-
-  def reset_gradient_velocities(self):
-    self.W_gradient_velocity = theano.shared(np.zeros((self.num_features, self.num_output_neurons)), borrow=True)
-    self.b_gradient_velocity = theano.shared(np.zeros((self.num_output_neurons,)), borrow = True)
 
 

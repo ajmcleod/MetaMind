@@ -4,34 +4,33 @@ import numpy as np
 import theano
 from theano import tensor as T
 import itertools
+from theano_layer import *
 
-class softmax_layer:
+class softmax_layer(theano_layer):
   _ids = itertools.count(1)
 
-  def __init__(self, X_var, y_var, X_values, y_values, trng, training_options = None, W = None, b = None):
+  def __init__(self, X_var, y_var, X_values, y_values, input_shape, trng, training_options = None, W = None, b = None):
     self.layer_id = self._ids.next()
 
-    self.X    = X_var
-    self.y    = y_var
-    self.trng = trng
-    self.W    = None
-    self.b    = None
-    self.initialize_softmax_values(X_values, y_values, W, b)
-    self.set_training_parameters(training_options)
-    self.train_accuracy = T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(X_values, self.W) + self.b), axis = 1), y_values))
+    self.X           = X_var.flatten(2)
+    self.y           = y_var
+    self.num_classes = T.max(y_values).eval() + 1
+    self.X_values = X_values.flatten(2)
+    self.num_features = np.prod(input_shape)
+    self.W_shape = (self.num_classes, np.prod(input_shape))
 
-    print 'Softmax %i initialized' % (self.layer_id)
+    self.initialize_parameters(W, b)
+    self.reset_gradient_sums()
+    self.reset_gradient_velocities()
+    self.set_training_parameters(training_options, trng = trng)
+    self.training_cost = - T.mean(T.log(T.nnet.softmax(T.dot(self.X_values, self.W.T) + self.b))[T.arange(y_values.shape[0]), y_values])
+    self.train_accuracy = T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(self.X_values, self.W.T) + self.b), axis = 1), y_values))
+
+    print 'Softmax Layer %i initialized' % (self.layer_id)
 
   #######################################################################################################################
 
-  def set_training_parameters(self, training_options):
-
-    if 'reset_gradient_sums' in training_options and training_options['reset_gradient_sums']:
-      self.W_gradient_sums = theano.shared(1e-8 * np.ones((self.num_features, self.num_classes)), borrow=True)
-      self.b_gradient_sums = theano.shared(1e-8 * np.ones((self.num_classes,)), borrow=True)
-    if 'reset_gradient_velocities' in training_options and training_options['reset_gradient_velocities']:
-      self.W_gradient_velocity = theano.shared(np.zeros((self.num_features, self.num_classes)), borrow=True)
-      self.b_gradient_velocity = theano.shared(np.zeros((self.num_classes,)), borrow = True)
+  def set_training_parameters(self, training_options, trng):
 
     learning_rate = training_options['learning_rate']
     dropout_prob  = training_options['dropout_prob']
@@ -41,10 +40,10 @@ class softmax_layer:
     rms_injection_rate = training_options['rms_injection_rate']
 
     if dropout_prob > 0.0:
-      dropout_mask                      = self.trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.num_features)) / dropout_prob
-      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(dropout_mask[:self.X.shape[0]] * self.X, self.W) + self.b))
+      dropout_mask                      = trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.num_features)) / dropout_prob
+      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(dropout_mask[:self.X.shape[0]] * self.X, self.W.T) + self.b))
     else:
-      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(self.X, self.W) + self.b))
+      masked_log_likelihood             = T.log(T.nnet.softmax(T.dot(self.X, self.W.T) + self.b))
     self.masked_negative_log_likelihood = - T.mean(masked_log_likelihood[T.arange(self.y.shape[0]),self.y])
 
     g_W = T.grad(cost=self.masked_negative_log_likelihood, wrt=self.W)
@@ -73,28 +72,5 @@ class softmax_layer:
 
   #######################################################################################################################
 
-  def initialize_softmax_values(self, X_values, y_values, W, b):
-
-    self.num_features  = X_values.eval().shape[1]
-    self.num_classes   = T.max(y_values).eval() + 1
-
-    if self.W == None:
-      if W == None:
-        self.W = theano.shared(self.trng.uniform(low = - np.sqrt(6. / (self.num_features + self.num_classes)),
-                                                 high = np.sqrt(6. / (self.num_features + self.num_classes)),
-                                                 size = (self.num_features, self.num_classes)).eval(), borrow=True)
-      else:
-        self.W = theano.shared(W, borrow=True)
-
-    if self.b == None:
-      if b == None:
-        self.b = theano.shared(np.zeros((self.num_classes,)), borrow=True)
-      else:
-        self.b = theano.shared(b, borrow=True)
-
-    self.training_cost = - T.mean(T.log(T.nnet.softmax(T.dot(X_values, self.W) + self.b))[T.arange(y_values.shape[0]), y_values])
-
-  #######################################################################################################################
-
   def predict(self, X_test):
-    return T.argmax(T.nnet.softmax(T.dot(X_test, self.W) + self.b), axis = 1)
+    return T.argmax(T.nnet.softmax(T.dot(X_test, self.W.T) + self.b), axis = 1)

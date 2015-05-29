@@ -70,12 +70,13 @@ class neural_net:
     parameter_updates.extend(self.L0.parameter_updates)
     train_model = theano.function(inputs = [index], outputs = self.L3.training_cost, updates = parameter_updates,
                                   givens = {X: self.X_train[index * batch_size: (index + 1) * batch_size],
-                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]})
+                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]}, on_unused_input='ignore')
 
     lowest_cost = np.inf
     current_cost = np.inf
     epoch = 0
     start_time = time.clock()
+    self.initialize_best_paramater_set(num_hidden_neurons)
 
     for ii in range(num_epochs):
       epoch = epoch + 1
@@ -84,31 +85,43 @@ class neural_net:
         current_cost = train_model(batch_index)
         if current_cost < lowest_cost:
           lowest_cost = current_cost
-          best_W0 = self.L0.W.eval()
-          best_b0 = self.L0.b.eval()
-          best_W1 = self.L1.W.eval()
-          best_b1 = self.L1.b.eval()
-          best_W2 = self.L2.W.eval()
-          best_b2 = self.L2.b.eval()
-          best_W3 = self.L3.W.eval()
-          best_b3 = self.L3.b.eval()
+          self.record_best_parameters()
         print 'negative_log_likelihood: %f' % (current_cost)
         print 'train_accuracy: %f' % (self.L3.train_accuracy.eval())
         print ''
 
     end_time = time.clock()
-    set_parameters = theano.function(inputs = [], outputs = self.L3.train_accuracy,
-                                     updates = [(self.L0.W, theano.shared(best_W0)),
-                                                (self.L0.b, theano.shared(best_b0)),
-                                                (self.L1.W, theano.shared(best_W1)),
-                                                (self.L1.b, theano.shared(best_b1)),
-                                                (self.L2.W, theano.shared(best_W2)),
-                                                (self.L2.b, theano.shared(best_b2)),
-                                                (self.L3.W, theano.shared(best_W3)),
-                                                (self.L3.b, theano.shared(best_b3))])
-    dummy = set_parameters()
+    self.revert_to_best_parameter_set()
     print 'softmax trained in %i epochs and %f seconds with training accuracy %f %%' % \
                                (epoch, end_time - start_time, 100 * self.L3.train_accuracy.eval())
+    
+  def initialize_best_paramater_set(self, num_hidden_neurons):
+    self.best_W0 = theano.shared(np.zeros((self.num_input_features, num_hidden_neurons[0])))
+    self.best_b0 = theano.shared(np.zeros((num_hidden_neurons[0],)))
+    self.best_W1 = theano.shared(np.zeros((num_hidden_neurons[0], num_hidden_neurons[1])))
+    self.best_b1 = theano.shared(np.zeros((num_hidden_neurons[1],)))
+    self.best_W2 = theano.shared(np.zeros((num_hidden_neurons[1], num_hidden_neurons[2])))
+    self.best_b2 = theano.shared(np.zeros((num_hidden_neurons[2],)))
+    self.best_W3 = theano.shared(np.zeros((num_hidden_neurons[2], self.num_classes)))
+    self.best_b3 = theano.shared(np.zeros((self.num_classes)))
+    self.record_best_parameters = theano.function(inputs = [], outputs = [],
+                                                  updates = [(self.best_W0, self.L0.W),
+                                                             (self.best_b0, self.L0.b),
+                                                             (self.best_W1, self.L1.W),
+                                                             (self.best_b1, self.L1.b),
+                                                             (self.best_W2, self.L2.W),
+                                                             (self.best_b2, self.L2.b),
+                                                             (self.best_W3, self.L3.W),
+                                                             (self.best_b3, self.L3.b)])
+    self.revert_to_best_parameter_set = theano.function(inputs = [], outputs = [],
+                                                        updates = [(self.L0.W, self.best_W0),
+                                                                   (self.L0.b, self.best_b0),
+                                                                   (self.L1.W, self.best_W1),
+                                                                   (self.L1.b, self.best_b1),
+                                                                   (self.L2.W, self.best_W2),
+                                                                   (self.L2.b, self.best_b2),
+                                                                   (self.L3.W, self.best_W3),
+                                                                   (self.L3.b, self.best_b3)])
 
   def accuracy(self, X, y):
     return T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(X, self.L3.W) + self.L3.b), axis = 1), y))
