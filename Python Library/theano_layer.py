@@ -28,8 +28,8 @@ class theano_layer:
   #######################################################################################################################
 
   def reset_gradient_sums(self):
-    self.W_gradient_sums = theano.shared(1e-8 * np.ones(self.W_shape), borrow=True)
-    self.b_gradient_sums = theano.shared(1e-8 * np.ones((self.W_shape[0],)), borrow=True)
+    self.W_gradient_sums = theano.shared(1e-8 * np.float32(np.ones(self.W_shape)), borrow=True)
+    self.b_gradient_sums = theano.shared(1e-8 * np.float32(np.ones((self.W_shape[0],))), borrow=True)
 
   #######################################################################################################################
 

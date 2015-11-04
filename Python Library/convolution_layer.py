@@ -9,30 +9,45 @@ from theano_layer import *
 class convolution_layer(theano_layer):
   _ids = itertools.count(1)
 
-  def __init__(self, X_var, X_values, input_shape, stride, depth, trng, batch_size, dropout_prob = None, W = None, b = None):
+  def __init__(self, X_var, X_values, input_shape, stride, depth, trng, batch_size, pad = True, dropout_prob = None, W = None, b = None):
     self.layer_id = self._ids.next()
 
     self.X            = X_var
     self.W_shape      = (depth, input_shape[0], stride, stride)
-    self.output_shape = (depth, input_shape[1], input_shape[2])
-    self.border_shift = (stride - 1) // 2
 
     self.initialize_parameters(W, b)
     self.reset_gradient_sums()
     self.reset_gradient_velocities()
 
-    convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
+    if pad != True:
+
+      self.output_shape = (depth, input_shape[1] - (2*stride - 1), input_shape[2] - (2*stride - 1))
+      convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
+                                     filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid')
+
+      if dropout_prob > 0.0:
+        self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
+        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid')
+      else:
+        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'valid')
+
+    else:
+
+      border_shift = (stride - 1) // 2
+      self.output_shape = (depth, input_shape[1], input_shape[2])
+      convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
                                      filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :,
-                                     self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
+                                     border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+
+      if dropout_prob > 0.0:
+        self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
+        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+      else:
+        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'full')[:, :,
+                                                border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+
 
     self.output = convolution + self.b.dimshuffle('x', 0, 'x', 'x')
-
-    if dropout_prob > 0.0:
-      self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
-      self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
-    else:
-      self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'full')[:, :,
-                                                self.border_shift: input_shape[1] + self.border_shift, self.border_shift: input_shape[2] + self.border_shift]
 
     print 'Convolution Layer %i initialized' % (self.layer_id)
 

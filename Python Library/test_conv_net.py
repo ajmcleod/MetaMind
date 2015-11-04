@@ -55,40 +55,15 @@ class conv_net:
 
     self.L0 = convolution_layer(X_var = X, X_values = self.X_train, trng = trng, W = self.L0_W_init, b = self.L0_b_init,
                                 stride = filter_parameters[0][0], depth = filter_parameters[0][1],
-                                dropout_prob = dropout_prob, batch_size = batch_size, pad = False, input_shape = training_examples.shape[1:])
-    self.L1 = max_pool_layer(X_var = self.L0.masked_output, X_values = self.L0.output, stride = filter_parameters[1][0],
-                             trng = trng, dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L0.output_shape)
-    self.L2 = convolution_layer(X_var = T.maximum(self.L1.masked_output, 0), X_values = T.maximum(self.L1.output, 0),
-                                trng = trng, stride = filter_parameters[2][0], depth = filter_parameters[2][1], input_shape = self.L1.output_shape,
-                                dropout_prob = dropout_prob, batch_size = batch_size, pad = False, W = self.L2_W_init, b = self.L2_b_init)
-    self.L3 = max_pool_layer(X_var = self.L2.masked_output, X_values = self.L2.output, stride = filter_parameters[3][0],
-                             trng = trng, dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L2.output_shape)
-    self.L4 = fully_connected_layer(X_var = T.maximum(self.L3.masked_output, 0), X_values = T.maximum(self.L3.output, 0),
-                                    trng = trng, num_neurons = filter_parameters[4][0], W = self.L4_W_init, b = self.L4_b_init,
-                                    dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L3.output_shape)
-    self.L5 = softmax_layer(X_var = T.maximum(self.L4.masked_output, 0), y_var = y, X_values = T.maximum(self.L4.output, 0), input_shape = self.L4.output_shape,
-                            y_values = self.y_train, trng = trng, training_options = training_options, W = self.L5_W_init, b = self.L5_b_init)
+                                dropout_prob = dropout_prob, batch_size = batch_size, input_shape = training_examples.shape[1:])
 
     self.L0.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
                                            reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
                                            rms_injection_rate = rms_injection_rate,
                                            use_nesterov_momentum = use_nesterov_momentum,
                                            momentum_decay_rate = momentum_decay_rate)
-    self.L2.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
-                                           reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
-                                           rms_injection_rate = rms_injection_rate,
-                                           use_nesterov_momentum = use_nesterov_momentum,
-                                           momentum_decay_rate = momentum_decay_rate)
-    self.L4.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
-                                           reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
-                                           rms_injection_rate = rms_injection_rate,
-                                           use_nesterov_momentum = use_nesterov_momentum,
-                                           momentum_decay_rate = momentum_decay_rate)
 
-    parameter_updates = self.L5.parameter_updates
-    parameter_updates.extend(self.L4.parameter_updates)
-    parameter_updates.extend(self.L2.parameter_updates)
-    parameter_updates.extend(self.L0.parameter_updates)
+    parameter_updates = self.L0.parameter_updates
 
     self.train_model = theano.function(inputs = [index], outputs = [], updates = parameter_updates,
                                   givens = {X: self.X_train[T.cast(index, 'int32') * batch_size: (T.cast(index, 'int32') + 1) * batch_size],

@@ -26,7 +26,7 @@ class fully_connected_layer(theano_layer):
     self.output_shape = num_neurons
 
     if dropout_prob > 0.0:
-      self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.W_shape[1])) / dropout_prob
+      self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size=(batch_size, self.W_shape[1]), dtype = 'float32') / dropout_prob
       self.masked_output = T.dot(self.X * self.dropout_mask[:self.X.shape[0]], self.W.T) + self.b
     else:
       self.masked_output = T.dot(self.X, self.W.T) + self.b
