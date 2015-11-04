@@ -21,7 +21,7 @@ class convolution_layer(theano_layer):
 
     if pad != True:
 
-      self.output_shape = (depth, input_shape[1] - (2*stride - 1), input_shape[2] - (2*stride - 1))
+      self.output_shape = (depth, input_shape[1] - stride + 1, input_shape[2] - stride + 1)
       convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
                                      filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid')
 

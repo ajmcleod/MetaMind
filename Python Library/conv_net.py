@@ -30,7 +30,7 @@ class conv_net:
     dropout_prob          = np.float32(dropout_prob)
     X                     = T.ftensor4('X')
     y                     = T.fvector('y')
-    index                 = T.fscalar('index')
+    index                 = T.iscalar('index')
     trng                  = T.shared_randomstreams.RandomStreams(random_seed)
     self.X_train          = theano.shared(training_examples, borrow=True)
     self.y_train          = theano.shared(training_labels, borrow=True)
@@ -91,8 +91,8 @@ class conv_net:
     parameter_updates.extend(self.L0.parameter_updates)
 
     self.train_model = theano.function(inputs = [index], outputs = [], updates = parameter_updates,
-                                  givens = {X: self.X_train[T.cast(index, 'int32') * batch_size: (T.cast(index, 'int32') + 1) * batch_size],
-                                            y: self.y_train[T.cast(index, 'int32') * batch_size: (T.cast(index, 'int32') + 1) * batch_size]}, on_unused_input='ignore')
+                                  givens = {X: self.X_train[index * batch_size: (index + 1) * batch_size],
+                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]}, on_unused_input='ignore')
 
     self.lowest_cost = np.inf
 #    self.initialize_best_paramater_set(filter_parameters)
