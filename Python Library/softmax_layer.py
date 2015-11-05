@@ -23,7 +23,7 @@ class softmax_layer(theano_layer):
     self.reset_gradient_sums()
     self.reset_gradient_velocities()
     self.set_training_parameters(training_options, trng = trng)
-    self.training_cost = - T.mean(T.log(T.nnet.softmax(T.dot(self.X_values, self.W.T) + self.b))[T.arange(y_values.shape[0]), T.cast(y_values, 'int8')])
+    self.training_cost = - T.mean(T.log(T.nnet.softmax(T.dot(self.X, self.W.T) + self.b))[T.arange(self.y.shape[0]), T.cast(self.y, 'int8')])
     self.train_accuracy = T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(self.X_values, self.W.T) + self.b), axis = 1), y_values), dtype = 'float32')
 
     print 'Softmax Layer %i initialized' % (self.layer_id)

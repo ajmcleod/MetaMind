@@ -21,21 +21,21 @@ class theano_layer:
       self.W = theano.shared(W, borrow=True)
 
     if b == None:
-      self.b = theano.shared(np.zeros((self.W_shape[0])).astype(np.float32), borrow=True)
+      self.b = theano.shared(np.zeros((self.W_shape[0]), dtype = np.float32), borrow=True)
     else:
       self.b = theano.shared(b, borrow=True)
 
   #######################################################################################################################
 
   def reset_gradient_sums(self):
-    self.W_gradient_sums = theano.shared(1e-8 * np.float32(np.ones(self.W_shape)), borrow=True)
-    self.b_gradient_sums = theano.shared(1e-8 * np.float32(np.ones((self.W_shape[0],))), borrow=True)
+    self.W_gradient_sums = theano.shared(1e-8 * np.ones(self.W_shape, dtype = np.float32), borrow=True)
+    self.b_gradient_sums = theano.shared(1e-8 * np.ones((self.W_shape[0],), dtype = np.float32), borrow=True)
 
   #######################################################################################################################
 
   def reset_gradient_velocities(self):
-    self.W_gradient_velocity = theano.shared(np.zeros(self.W_shape), borrow=True)
-    self.b_gradient_velocity = theano.shared(np.zeros((self.W_shape[0],)), borrow = True)
+    self.W_gradient_velocity = theano.shared(np.zeros(self.W_shape, dtype = np.float32), borrow=True)
+    self.b_gradient_velocity = theano.shared(np.zeros((self.W_shape[0],), dtype = np.float32), borrow = True)
 
 
 class input_layer:

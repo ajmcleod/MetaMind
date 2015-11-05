@@ -13,6 +13,7 @@ class convolution_layer(theano_layer):
     self.layer_id = self._ids.next()
 
     self.X            = X_var
+    self.X_shape      = (batch_size, input_shape[0], input_shape[1], input_shape[2])
     self.W_shape      = (depth, input_shape[0], stride, stride)
 
     self.initialize_parameters(W, b)
@@ -22,32 +23,26 @@ class convolution_layer(theano_layer):
     if pad != True:
 
       self.output_shape = (depth, input_shape[1] - stride + 1, input_shape[2] - stride + 1)
-      convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
-                                     filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid')
+      self.output = T.nnet.conv.conv2d(input = X_values, filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid') + self.b.dimshuffle('x', 0, 'x', 'x')
 
       if dropout_prob > 0.0:
         self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
-        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid')
+        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, image_shape = self.X_shape, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid') + self.b.dimshuffle('x', 0, 'x', 'x')
       else:
-        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'valid')
+        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, image_shape = self.X_shape, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'valid') + self.b.dimshuffle('x', 0, 'x', 'x')
 
     else:
 
       border_shift = (stride - 1) // 2
       self.output_shape = (depth, input_shape[1], input_shape[2])
-      convolution = T.nnet.conv.conv2d(input = X_values, filters = self.W,
-                                     filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :,
-                                     border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+      self.output = T.nnet.conv.conv2d(input = X_values, filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift] + self.b.dimshuffle('x', 0, 'x', 'x')
 
       if dropout_prob > 0.0:
         self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
-        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+        self.masked_output = T.nnet.conv.conv2d(input = self.X * self.dropout_mask[:self.X.shape[0]], filters = self.W, image_shape = self.X_shape, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift] + self.b.dimshuffle('x', 0, 'x', 'x')
       else:
-        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, subsample = (1,1), border_mode = 'full')[:, :,
-                                                border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift]
+        self.masked_output = T.nnet.conv.conv2d(input = self.X, filters = self.W, image_shape = self.X_shape, filter_shape = self.W_shape, subsample = (1,1), border_mode = 'full')[:, :, border_shift: input_shape[1] + border_shift, border_shift: input_shape[2] + border_shift] + self.b.dimshuffle('x', 0, 'x', 'x')
 
-
-    self.output = convolution + self.b.dimshuffle('x', 0, 'x', 'x')
 
     print 'Convolution Layer %i initialized' % (self.layer_id)
 
