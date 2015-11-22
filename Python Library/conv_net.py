@@ -18,99 +18,75 @@ from max_pool_layer import *
 class conv_net:
 
   def __init__(self, training_examples, training_labels, filter_parameters, batch_size = 1000, learning_rate = 1e-4,
-               reg_strength = 1e-3, rms_decay_rate = 0.9, rms_injection_rate = None, dropout_prob = 0.5,
-               load_model = None, use_nesterov_momentum = False, momentum_decay_rate = None, random_seed = None):
+               reg_strength = 1e-3, rms_decay_rate = 0.9, dropout_prob = 0.5, momentum_decay_rate = 0.5, rms_injection_rate = None, 
+               load_model = None, use_nesterov_momentum = False, random_seed = None):
 
     self.num_classes        = np.amax(training_labels) + 1
     self.num_train_examples = training_examples.shape[0]
     self.num_train_batches  = np.ceil(float(self.num_train_examples) / batch_size).astype(int)
+    self.X_train            = theano.shared(training_examples, borrow=True)
+    self.y_train            = theano.shared(training_labels, borrow=True)
+    self.trng               = T.shared_randomstreams.RandomStreams(random_seed)
+    index                   = T.iscalar('index')
+    X                       = T.ftensor4('X')
+    y                       = T.bvector('y')
+
+    self.batch_size            = batch_size
+    self.dropout_prob          = np.float32(dropout_prob)
+    self.learning_rate         = np.float32(learning_rate)
+    self.reg_strength          = np.float32(reg_strength)
+    self.use_nesterov_momentum = use_nesterov_momentum
+    self.momentum_decay_rate   = np.float32(momentum_decay_rate)
+    self.rms_decay_rate        = np.float32(rms_decay_rate)
     if rms_injection_rate == None:
-      rms_injection_rate = 1 - rms_decay_rate
+      self.rms_injection_rate  = np.float32(1.0 - self.rms_decay_rate)
+    else: 
+      self.rms_injection_rate  = np.float32(rms_injection_rate)
+    self.fetch_model_info(model_dir=load_model)
 
-    dropout_prob          = np.float32(dropout_prob)
-    X                     = T.ftensor4('X')
-    y                     = T.fvector('y')
-    index                 = T.iscalar('index')
-    trng                  = T.shared_randomstreams.RandomStreams(random_seed)
-    self.X_train          = theano.shared(training_examples, borrow=True)
-    self.y_train          = theano.shared(training_labels, borrow=True)
-    training_options = {'learning_rate': learning_rate, 'batch_size': batch_size,
-                        'dropout_prob': dropout_prob, 'reg_strength': reg_strength,
-                        'rms_decay_rate': rms_decay_rate, 'rms_injection_rate': rms_injection_rate,
-                        'use_nesterov_momenum': use_nesterov_momentum, 'momentum_decay_rate': momentum_decay_rate,
-                        'reset_gradient_sums': True, 'reset_gradient_velocities': True}
+    self.L0 = convolution_layer(parameters=self, X_full=X, X_masked=X, input_shape=training_examples.shape[1:], W=self.L0_W_init, b=self.L0_b_init, stride=filter_parameters[0][0], depth=filter_parameters[0][1], pad=False)
+    self.L1 = max_pool_layer(parameters=self, X_full=self.L0.output, X_masked=self.L0.masked_output, input_shape=self.L0.output_shape, stride=filter_parameters[1][0])
+    self.L2 = convolution_layer(parameters=self, X_full=T.maximum(self.L1.output,0), X_masked=T.maximum(self.L1.masked_output,0), input_shape=self.L1.output_shape, W=self.L2_W_init, b=self.L2_b_init, stride=filter_parameters[2][0], depth=filter_parameters[2][1], pad=False)
+    self.L3 = max_pool_layer(parameters=self, X_full=self.L2.output, X_masked=self.L2.masked_output, input_shape=self.L2.output_shape, stride=filter_parameters[3][0])
+    self.L4 = fully_connected_layer(parameters=self, X_full=T.maximum(self.L3.output,0), X_masked=T.maximum(self.L3.masked_output,0), input_shape=self.L3.output_shape, num_neurons=filter_parameters[4][0], W=self.L4_W_init, b=self.L4_b_init)
+    self.L5 = softmax_layer(parameters=self, X_full=T.maximum(self.L4.output,0), X_masked=T.maximum(self.L4.masked_output,0), y_var=y, input_shape=self.L4.output_shape, W=self.L5_W_init, b=self.L5_b_init)
 
-    if load_model != None:
-      self.fetch_model_info(load_model)
-    else:
-      self.training_log = ''
-      self.L0_W_init = None
-      self.L0_b_init = None
-      self.L2_W_init = None
-      self.L2_b_init = None
-      self.L4_W_init = None
-      self.L4_b_init = None
-      self.L5_W_init = None
-      self.L5_b_init = None
-
-    self.L0 = convolution_layer(X_var = X, X_values = self.X_train, trng = trng, W = self.L0_W_init, b = self.L0_b_init,
-                                stride = filter_parameters[0][0], depth = filter_parameters[0][1],
-                                dropout_prob = dropout_prob, batch_size = batch_size, pad = False, input_shape = training_examples.shape[1:])
-    self.L1 = max_pool_layer(X_var = self.L0.masked_output, X_values = self.L0.output, stride = filter_parameters[1][0],
-                             trng = trng, dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L0.output_shape)
-    self.L2 = convolution_layer(X_var = T.maximum(self.L1.masked_output, 0), X_values = T.maximum(self.L1.output, 0),
-                                trng = trng, stride = filter_parameters[2][0], depth = filter_parameters[2][1], input_shape = self.L1.output_shape,
-                                dropout_prob = dropout_prob, batch_size = batch_size, pad = False, W = self.L2_W_init, b = self.L2_b_init)
-    self.L3 = max_pool_layer(X_var = self.L2.masked_output, X_values = self.L2.output, stride = filter_parameters[3][0],
-                             trng = trng, dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L2.output_shape)
-    self.L4 = fully_connected_layer(X_var = T.maximum(self.L3.masked_output, 0), X_values = T.maximum(self.L3.output, 0),
-                                    trng = trng, num_neurons = filter_parameters[4][0], W = self.L4_W_init, b = self.L4_b_init,
-                                    dropout_prob = dropout_prob, batch_size = batch_size, input_shape = self.L3.output_shape)
-    self.L5 = softmax_layer(X_var = T.maximum(self.L4.masked_output, 0), y_var = y, X_values = T.maximum(self.L4.output, 0), input_shape = self.L4.output_shape,
-                            y_values = self.y_train, trng = trng, training_options = training_options, W = self.L5_W_init, b = self.L5_b_init)
-
-    self.L0.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
-                                           reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
-                                           rms_injection_rate = rms_injection_rate,
-                                           use_nesterov_momentum = use_nesterov_momentum,
-                                           momentum_decay_rate = momentum_decay_rate)
-    self.L2.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
-                                           reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
-                                           rms_injection_rate = rms_injection_rate,
-                                           use_nesterov_momentum = use_nesterov_momentum,
-                                           momentum_decay_rate = momentum_decay_rate)
-    self.L4.configure_training_environment(self.L5.training_cost, learning_rate = learning_rate,
-                                           reg_strength = reg_strength, rms_decay_rate = rms_decay_rate,
-                                           rms_injection_rate = rms_injection_rate,
-                                           use_nesterov_momentum = use_nesterov_momentum,
-                                           momentum_decay_rate = momentum_decay_rate)
+    self.L0.configure_training_environment(parameters=self, cost_function=self.L5.training_cost)
+    self.L2.configure_training_environment(parameters=self, cost_function=self.L5.training_cost)
+    self.L4.configure_training_environment(parameters=self, cost_function=self.L5.training_cost)
+    self.L5.configure_training_environment(parameters=self, cost_function=self.L5.training_cost)
 
     parameter_updates = self.L5.parameter_updates
     parameter_updates.extend(self.L4.parameter_updates)
     parameter_updates.extend(self.L2.parameter_updates)
     parameter_updates.extend(self.L0.parameter_updates)
 
-    self.train_model = theano.function(inputs = [index], outputs = [], updates = parameter_updates,
+    self.train_batch = theano.function(inputs = [index], outputs = [], updates = parameter_updates,
                                   givens = {X: self.X_train[index * batch_size: (index + 1) * batch_size],
-                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]}, on_unused_input='ignore')
+                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]})
+                           
+    self.num_correct_batch = theano.function(inputs = [index], outputs = T.sum(T.eq(T.argmax(T.dot(T.maximum(self.L4.output,0), self.L5.W.T) + self.L5.b, axis=1), y)), updates = None,
+                                  givens = {X: self.X_train[index * batch_size: (index + 1) * batch_size],
+                                            y: self.y_train[index * batch_size: (index + 1) * batch_size]})
 
-    self.lowest_cost = np.inf
+#    self.lowest_cost = np.inf
 #    self.initialize_best_paramater_set(filter_parameters)
     self.epoch = 0
     print ''
 
   #######################################################################################################################
 
+
   def train(self, num_epochs, compute_accuracy = False):
     start_time = time.clock()
 
     for ii in range(num_epochs):
       self.epoch += 1
-      print 'starting epoch %i \n' % (ii + 1)
+      print 'current training accuracy: %f %% \n \nstarting epoch %i' % (100 * self.training_accuracy(), self.epoch)
       for batch_index in xrange(self.num_train_batches):	
-#        current_cost = self.train_model(batch_index)
-        self.train_model(batch_index)
-        print 'batch complete'
+        self.train_batch(batch_index)
+        print '    batch %i of %i complete' % (batch_index + 1, self.num_train_batches)
+      print ''
 #        if current_cost < self.lowest_cost:
 #          self.lowest_cost = current_cost
 #          self.record_best_parameters()
@@ -120,11 +96,11 @@ class conv_net:
 
       end_time = time.clock()
 #      self.revert_to_best_parameter_set()
-      best_train_accuracy = self.L5.train_accuracy.eval()
-    print 'softmax trained in %i epochs and %f seconds with training accuracy %f %%' % \
-                               (num_epochs, end_time - start_time, 100 * best_train_accuracy)
+#      best_train_accuracy = self.L5.train_accuracy.eval()
+    print 'softmax trained for %i epochs in %f seconds with final training accuracy %f %%' % \
+                               (num_epochs, end_time - start_time, 100 * self.training_accuracy())
     self.training_log = self.training_log + 'trained for %i epochs on %i images, new training accuracy %f %% \n' % \
-                               (num_epochs, self.num_train_examples, 100 * best_train_accuracy)
+                               (num_epochs, self.num_train_examples, 100 * self.training_accuracy())
 
   #######################################################################################################################
 
@@ -164,27 +140,38 @@ class conv_net:
 
   def fetch_model_info(self, model_dir):
 
-    full_path = '/Users/thatscottishkid/Google Drive/Stanford/Machine Learning/cs231n/Trained Models/' + model_dir
+    if model_dir != None:
+      full_path = '/farmshare/user_data/ajmcleod/machine_learning/galzoo/trained_models/' + model_dir
+      with open(full_path + '/L0.W', 'rb') as f:
+        self.L0_W_init = pickle.load(f)
+      with open(full_path + '/L0.b', 'rb') as f:
+        self.L0_b_init = pickle.load(f)
+      with open(full_path + '/L2.W', 'rb') as f:
+        self.L2_W_init = pickle.load(f)
+      with open(full_path + '/L2.b', 'rb') as f:
+        self.L2_b_init = pickle.load(f)
+      with open(full_path + '/L4.W', 'rb') as f:
+        self.L4_W_init = pickle.load(f)
+      with open(full_path + '/L4.b', 'rb') as f:
+        self.L4_b_init = pickle.load(f)
+      with open(full_path + '/L5.W', 'rb') as f:
+        self.L5_W_init = pickle.load(f)
+      with open(full_path + '/L5.b', 'rb') as f:
+        self.L5_b_init = pickle.load(f)
+      with open(full_path + '/training_log.txt', 'r') as f:
+        self.training_log = f.read()
 
-    with open(full_path + '/L0.W', 'rb') as f:
-      self.L0_W_init = pickle.load(f)
-    with open(full_path + '/L0.b', 'rb') as f:
-      self.L0_b_init = pickle.load(f)
-    with open(full_path + '/L2.W', 'rb') as f:
-      self.L2_W_init = pickle.load(f)
-    with open(full_path + '/L2.b', 'rb') as f:
-      self.L2_b_init = pickle.load(f)
-    with open(full_path + '/L4.W', 'rb') as f:
-      self.L4_W_init = pickle.load(f)
-    with open(full_path + '/L4.b', 'rb') as f:
-      self.L4_b_init = pickle.load(f)
-    with open(full_path + '/L5.W', 'rb') as f:
-      self.L5_W_init = pickle.load(f)
-    with open(full_path + '/L5.b', 'rb') as f:
-      self.L5_b_init = pickle.load(f)
+    else:
+      self.training_log = ''
+      self.L0_W_init = None
+      self.L0_b_init = None
+      self.L2_W_init = None
+      self.L2_b_init = None
+      self.L4_W_init = None
+      self.L4_b_init = None
+      self.L5_W_init = None
+      self.L5_b_init = None
 
-    with open(full_path + '/training_log.txt', 'r') as f:
-      self.training_log = f.read()
 
   #######################################################################################################################
 
@@ -216,11 +203,22 @@ class conv_net:
                                                                    (self.L5.W, self.best_W5),
                                                                    (self.L5.b, self.best_b5)])
 
+  #######################################################################################################################
+
+  def training_accuracy(self):
+    return float(np.sum([self.num_correct_batch(ii) for ii in np.arange(self.num_train_batches)])) / float(self.num_train_examples)
+
+  #######################################################################################################################
+
   def accuracy(self, X, y):
     return T.mean(T.eq(T.argmax(T.nnet.softmax(T.dot(X, self.L3.W) + self.L3.b), axis = 1), y))
 
+  #######################################################################################################################
+
   def accuracy_np(self, X, y):
     return np.mean(np.equal(np.argmax(T.nnet.softmax(T.dot(X, self.softmaxLayer0.W) + self.softmaxLayer0.b).eval(), axis=1), y))
+
+  #######################################################################################################################
 
   def f1(self, X, y):
     return metrics.f1_score(y, T.argmax(T.nnet.softmax(T.dot(X, self.softmaxLayer0.W) + self.softmaxLayer0.b), axis = 1).eval())

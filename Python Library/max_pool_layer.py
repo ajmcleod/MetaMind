@@ -10,19 +10,17 @@ from theano_layer import *
 class max_pool_layer(theano_layer):
   _ids = itertools.count(1)
 
-  def __init__(self, X_var, X_values, input_shape, stride, trng, batch_size = None, dropout_prob = None):
+  def __init__(self, parameters, X_full, X_masked, input_shape, stride):
     self.layer_id = self._ids.next()
 
-    self.output = T.signal.downsample.max_pool_2d(input = X_values, ds = (stride, stride), ignore_border = False)
+    self.output = T.signal.downsample.max_pool_2d(input = X_full, ds = (stride, stride), ignore_border = False)
     self.output_shape = (input_shape[0], input_shape[1] / stride, input_shape[2] / stride)
 
-    if dropout_prob > 0.0:
-      if batch_size == None:
-        batch_size = self.num_training_examples
-      self.dropout_mask  = trng.binomial(n = 1, p = 1 - dropout_prob, size = np.insert(input_shape, 0, batch_size), dtype = 'float32') / dropout_prob
-      self.masked_output = T.signal.downsample.max_pool_2d(input = X_var * self.dropout_mask , ds = (stride, stride), ignore_border = False)
+    if T.gt(parameters.dropout_prob, 0.0):
+      self.dropout_mask  = parameters.trng.binomial(n = 1, p = 1 - parameters.dropout_prob, size = X_masked.shape, dtype = 'float32') / parameters.dropout_prob
+      self.masked_output = T.signal.downsample.max_pool_2d(input = X_masked * self.dropout_mask, ds = (stride, stride), ignore_border = False)
     else:
-      self.masked_output = downsample.max_pool_2d(input = X_var, ds = (stride, stride), ignore_border = False)
+      self.masked_output = T.signal.downsample.max_pool_2d(input = X_masked, ds = (stride, stride), ignore_border = False)
 
     print 'Maxpool Layer %i initialized' % (self.layer_id)
 

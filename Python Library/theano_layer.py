@@ -34,8 +34,8 @@ class theano_layer:
   #######################################################################################################################
 
   def reset_gradient_velocities(self):
-    self.W_gradient_velocity = theano.shared(np.zeros(self.W_shape, dtype = np.float32), borrow=True)
-    self.b_gradient_velocity = theano.shared(np.zeros((self.W_shape[0],), dtype = np.float32), borrow = True)
+    self.W_gradient_velocity = theano.shared(np.zeros(self.W_shape, dtype=np.float32), borrow=True)
+    self.b_gradient_velocity = theano.shared(np.zeros((self.W_shape[0],), dtype=np.float32), borrow=True)
 
 
 class input_layer:
