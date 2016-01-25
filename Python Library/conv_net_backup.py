@@ -17,9 +17,45 @@ from softmax_layer import *
 
 class conv_net:
 
+    def __init__(self, training_examples, training_labels, network_architecture, batch_size = 1000, learning_rate = 1e-4,
+                 reg_strength = 1e-3, rms_decay_rate = 0.9, momentum_decay_rate = 0.5, rms_injection_rate = None, 
+                 load_model = None, use_nesterov_momentum = False, random_seed = None):
+
+        self.network_architecture  = network_architecture
+        self.num_classes           = np.amax(training_labels) + 1
+        self.num_train_examples    = training_examples.shape[0]
+        self.input_shape           = training_examples.shape[1:]
+        self.num_train_batches     = np.ceil(float(self.num_train_examples) / batch_size).astype(int)
+        self.X_train               = theano.shared(training_examples, borrow=True)
+        self.y_train               = theano.shared(training_labels, borrow=True)
+        self.trng                  = T.shared_randomstreams.RandomStreams(random_seed)
+        self.rng                   = np.random.RandomState(random_seed)
+        self.indices               = T.ivector('indices')
+        self.index                 = T.iscalar('index')
+        self.X                     = T.ftensor4('X')
+        self.y                     = T.bvector('y')
+
+        self.batch_size            = batch_size
+        self.learning_rate         = np.float32(learning_rate)
+        self.reg_strength          = np.float32(reg_strength)
+        self.use_nesterov_momentum = use_nesterov_momentum
+        self.momentum_decay_rate   = np.float32(momentum_decay_rate)
+        self.rms_decay_rate        = np.float32(rms_decay_rate)
+        if rms_injection_rate == None:
+            self.rms_injection_rate  = np.float32(1.0 - self.rms_decay_rate)
+        else: 
+            self.rms_injection_rate  = np.float32(rms_injection_rate)
+
+        self.initialize_model()
+
+        self.fetch_model_info(model_dir=load_model)
+        self.set_training_parameters()
+
+        self.batch_step = 0
+
   #######################################################################################################################
 
-    def initialize_model(self, model_directory = None):
+    def initialize_model(self):
 
         print ''
         self.layers = [input_layer(self)]
@@ -30,33 +66,26 @@ class conv_net:
             if 'activation' in layer_info:
                 layer_activation = layer_info['activation']
             else:
-                self.network_architecture[ii]['activation'] = None
                 layer_activation = None
 
             if 'dropout_prob' in layer_info:
                 dropout_prob = layer_info['dropout_prob']
             else:
-                self.network_architecture[ii]['doprout_prob'] = 0.0
                 dropout_prob = 0.0
 
-            if layer_activation == 'maxout':
-                if  'maxout_depth' in layer_info:
-                    maxout_depth = layer_info['maxout_depth']
-                else:
-                    self.network_architecture[ii]['maxout_depth'] = 2
-                    maxout_depth = 2
+            if layer_activation == 'maxout' and 'maxout_depth' in layer_info:
+                maxout_depth = layer_info['maxout_depth']
             else:
-                self.network_architecture[ii]['maxout_depth'] = 1
-                maxout_depth = 1
+                maxout_depth = 2
 
             if layer_info['type'] == 'convolution' and 'stride' in layer_info and 'depth' in layer_info and 'pad' in layer_info:
-                self.layers.append(convolution_layer(self, previous_layer=self.layers[ii], stride=layer_info['stride'], depth=layer_info['depth'], pad=layer_info['pad'], activation=layer_activation, dropout_prob=dropout_prob, maxout_depth=maxout_depth, model_directory=model_directory))
+                self.layers.append(convolution_layer(self, previous_layer=self.layers[ii], stride=layer_info['stride'], depth=layer_info['depth'], pad=layer_info['pad'], activation=layer_activation, dropout_prob=dropout_prob, maxout_depth=maxout_depth))
             elif layer_info['type'] == 'max_pool' and 'stride' in layer_info:
                 self.layers.append(max_pool_layer(self, previous_layer=self.layers[ii], stride=layer_info['stride'], dropout_prob=dropout_prob))
             elif layer_info['type'] == 'fully_connected' and 'depth' in layer_info:
-                self.layers.append(fully_connected_layer(self, previous_layer=self.layers[ii], depth=layer_info['depth'], activation=layer_activation, dropout_prob=dropout_prob, maxout_depth=maxout_depth, model_directory=model_directory))
+                self.layers.append(fully_connected_layer(self, previous_layer=self.layers[ii], depth=layer_info['depth'], activation=layer_activation, dropout_prob=dropout_prob, maxout_depth=maxout_depth))
             elif layer_info['type'] == 'softmax':
-                self.layers.append(softmax_layer(self, previous_layer=self.layers[ii], y_var=self.y, dropout_prob=dropout_prob, model_directory=model_directory))
+                self.layers.append(softmax_layer(self, previous_layer=self.layers[ii], y_var=self.y, dropout_prob=dropout_prob))
                 if (ii + 1) < len(self.network_architecture):
                     print '\nThe Softmax Layer must be the last layer of the network. No further layers will be added beyond Softmax Layer 1 \n'
                     break
@@ -65,18 +94,13 @@ class conv_net:
                 sys.exit(0)
         print ''
 
+
   #######################################################################################################################
 
-    def set_training_environment(self):
+    def set_training_parameters(self):
 
-        self.learning_rate         = np.float32(self.learning_rate)
-        self.reg_strength          = np.float32(self.reg_strength)
-        self.momentum_decay_rate   = np.float32(self.momentum_decay_rate)
-        self.rms_decay_rate        = np.float32(self.rms_decay_rate)
-
-        for ii in range(len(self.network_architecture)):
-            self.layers[ii+1].configure_outputs(self)
-            self.network_architecture[ii]['dropout_prob'] = self.layers[ii+1].dropout_prob
+        for current_layer in self.layers[1:]:
+            current_layer.configure_outputs(self)
 
         parameter_updates = []
         for current_layer in self.layers[1:]:
@@ -108,14 +132,7 @@ class conv_net:
         for key,value in self.current_training_parameters.items():
             print('{} : {}'.format(key, value))
         print ''
-
-        self.training_log = self.training_log + 'training environment set with... \n'
-        for key,value in self.current_training_parameters.items():
-            self.training_log = self.training_log + '{} : {}'.format(key, value) + '\n'
-        for ii in range(len(self.network_architecture)):
-            self.training_log = self.training_log + 'layer ' + str(ii+1) + ' dropout_prob : ' + str(self.network_architecture[ii]['dropout_prob']) + '\n'
-        self.training_log = self.training_log + '\n'
-
+# set new values in training log...
 
   #######################################################################################################################
 
@@ -125,26 +142,25 @@ class conv_net:
             self.batch_step += 1
             self.train_batch(np.int32(self.rng.random_integers(0, self.num_train_examples - 1, (self.batch_size))))
         end_time = time.clock()
-        self.training_log = self.training_log + 'trained for %i batch steps, new training accuracy %f %% \n' % \
-                                             (num_batches, 100 * self.training_accuracy())
+        self.training_log = self.training_log + 'trained for %i batch steps on %i images, new training accuracy %f %% \n' % \
+                                             (num_batches, self.num_train_examples, 100 * self.training_accuracy())
 
   #######################################################################################################################
 
     def verbose_train(self, num_batches, print_interval = 100):
-        self.batch_step = 0
         start_time = time.clock()
         if (self.batch_step % print_interval == 0):
             print '%i batch steps completed \ncurrent training cost: %f \n' % (self.batch_step, self.training_cost())
         for ii in range(num_batches):
-            self.train_batch(np.int32(self.rng.random_integers(0, self.num_train_examples - 1, (self.batch_size))))
             self.batch_step += 1
             if (self.batch_step % print_interval == 0):
                 print '%i batch steps completed \ncurrent training cost: %f \n' % (self.batch_step, self.training_cost())
+            self.train_batch(np.int32(self.rng.random_integers(0, self.num_train_examples - 1, (self.batch_size))))
         end_time = time.clock()
         print 'softmax trained for %i batches in %f seconds with final training cost %f and final training accuracy %f %% ' % \
                                (num_batches, end_time - start_time, self.training_cost(), 100 * self.training_accuracy())
-        self.training_log = self.training_log + 'trained for %i epochs on %i images, new training cost %f and training accuracy %f %% \n \n' % \
-                               (num_batches, self.batch_size, self.training_cost(), 100 * self.training_accuracy())
+        self.training_log = self.training_log + 'trained for %i epochs on %i images, new training cost %f and training accuracy %f %% \n' % \
+                               (num_batches, self.num_train_examples, self.training_cost(), 100 * self.training_accuracy())
 
   #######################################################################################################################
 
@@ -177,24 +193,47 @@ class conv_net:
 
     def save_model(self, directory):
 
-        full_path = '/farmshare/user_data/ajmcleod/machine_learning/galzoo/trained_models/' + directory 
-        if not os.path.exists(full_path):
-            print 'Saving model to ' + directory 
-        else:
-            timestamp = time.strftime("_%d_%b_%Y_%X", time.localtime())
-            full_path = full_path + timestamp
-            print 'Model with that name already exists. Saving model to ' + directory + timestamp
+        timestamp = time.strftime("_%d_%b_%Y_%X", time.localtime())
+        full_path = '/farmshare/user_data/ajmcleod/machine_learning/galzoo/trained_models/' + directory + timestamp
+        print 'Saving model to ' + directory + timestamp 
         os.mkdir(full_path)
 
         with open(full_path + '/training_log.txt', 'a') as f:
             f.write(self.training_log)
 
-        pickle.dump(self.network_architecture, open(full_path + '/network_architecture.p', 'wb'))
-
         for ii in range(len(self.layers[1:])):
             if self.layers[ii+1].layer_type != 'max_pool':
                 for jj in range(len(self.layers[ii+1].W)):
-                    np.savez_compressed(full_path + '/layer_' + str(ii+1) + '_filter_parameters_' + str(jj), W = self.layers[ii+1].W[jj].get_value(), b = self.layers[ii+1].b[jj].get_value())
+                    np.savez_compressed(full_path + '/layer_' + str(ii+1) + '_W_' + str(jj), layer = self.layers[ii+1].W[jj].get_value())
+                    np.savez_compressed(full_path + '/layer_' + str(ii+1) + '_b_' + str(jj), layer = self.layers[ii+1].b[jj].get_value())
+
+
+  #######################################################################################################################
+
+    def fetch_model_info(self, model_dir):
+
+        if model_dir != None:
+            full_path = '/farmshare/user_data/ajmcleod/machine_learning/galzoo/trained_models/' + model_dir
+            with open(full_path + '/L0.W', 'rb') as f:
+                self.L0_W_init = pickle.load(f)
+            with open(full_path + '/L0.b', 'rb') as f:
+                self.L0_b_init = pickle.load(f)
+            with open(full_path + '/L2.W', 'rb') as f:
+                self.L2_W_init = pickle.load(f)
+            with open(full_path + '/L2.b', 'rb') as f:
+                self.L2_b_init = pickle.load(f)
+            with open(full_path + '/L4.W', 'rb') as f:
+                self.L4_W_init = pickle.load(f)
+            with open(full_path + '/L4.b', 'rb') as f:
+                self.L4_b_init = pickle.load(f)
+            with open(full_path + '/L5.W', 'rb') as f:
+                self.L5_W_init = pickle.load(f)
+            with open(full_path + '/L5.b', 'rb') as f:
+                self.L5_b_init = pickle.load(f)
+            with open(full_path + '/training_log.txt', 'r') as f:
+                self.training_log = f.read()
+        else:
+            self.training_log = ''
 
 
   #######################################################################################################################

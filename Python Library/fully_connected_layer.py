@@ -1,66 +1,47 @@
 #!/usr/bin/env python
 
-import numpy as np
-import theano
-from theano import tensor as T
-import itertools
 from theano_layer import *
 
 class fully_connected_layer(theano_layer):
-  _ids = itertools.count(1)
 
-  def __init__(self, parameters, X_full, X_masked, input_shape, num_neurons, W = None, b = None):
-    self.layer_id = self._ids.next()
+    def __init__(self, parameters, previous_layer, depth, activation = None, dropout_prob = 0.0, maxout_depth = 2, batch_normalize = False, model_directory = None):
+        self.layer_id = self._ids.next()
+        self.layer_type = 'fully_connected'
 
-    self.X_full             = X_full.flatten(2)
-    self.X_masked           = X_masked.flatten(2)
-    self.num_features       = np.prod(input_shape)
-    self.W_shape            = (num_neurons, self.num_features)
-    self.num_output_neurons = num_neurons
+        self.previous_layer     = previous_layer
+        self.num_features       = np.prod(previous_layer.output_shape)
+        self.W_shape            = (depth, self.num_features)
+        self.output_shape       = (depth)
+        self.activation         = activation
+        self.dropout_prob       = dropout_prob
+        self.batch_normalize    = batch_normalize
 
-    self.initialize_parameters(W, b)
-    self.reset_gradient_sums()
-    self.reset_gradient_velocities()
+        if self.activation == 'maxout':
+            self.maxout_depth  = maxout_depth
+        else:
+            self.maxout_depth  = 1
+        self.initialize_filters(parameters, model_directory)
 
-    self.output = T.dot(self.X_full, self.W.T) + self.b
-    self.output_shape = num_neurons
+        self.initialize_gradient_sums()
+        self.initialize_gradient_velocities()
 
-    if T.gt(parameters.dropout_prob, 0.0):
-      self.dropout_mask  = parameters.trng.binomial(n = 1, p = 1 - parameters.dropout_prob, size=self.X_masked.shape, dtype = 'float32') / parameters.dropout_prob
-      self.masked_output = T.dot(self.X_masked * self.dropout_mask, self.W.T) + self.b
-    else:
-      self.masked_output = T.dot(self.X_masked, self.W.T) + self.b
-
-    print 'Fully Connected Layer %i initialized' % (self.layer_id)
+        print 'Fully Connected Layer %i initialized' % (self.layer_id)
     
   #######################################################################################################################
 
-  def configure_training_environment(self, parameters, cost_function):
+    def configure_outputs(self, parameters):
 
-    self.g_W = T.grad(cost=cost_function, wrt=self.W)
-    self.g_b = T.grad(cost=cost_function, wrt=self.b)
+        output_list = []
+        masked_output_list = []
+        X_full = self.previous_layer.output.flatten(2)
+        if self.dropout_prob > 0.0:
+            dropout_mask  = parameters.trng.binomial(n = 1, p = 1 - self.dropout_prob, size = self.previous_layer.masked_output.flatten(2).shape, dtype = 'float32') / self.dropout_prob
+            X_masked = self.previous_layer.masked_output.flatten(2) * dropout_mask
+        else:
+            X_masked = self.previous_layer.masked_output.flatten(2)
 
-    if parameters.use_nesterov_momentum:
-      W_update = self.W_gradient_velocity * parameters.momentum_decay_rate * parameters.momentum_decay_rate - (np.float32(1) + parameters.momentum_decay_rate) * parameters.learning_rate * self.g_W
-      b_update = self.b_gradient_velocity * parameters.momentum_decay_rate * parameters.momentum_decay_rate - (np.float32(1) + parameters.momentum_decay_rate) * parameters.learning_rate * self.g_b
-    else:
-      W_update = - parameters.learning_rate * self.g_W
-      b_update = - parameters.learning_rate * self.g_b
+        for ii in range(self.maxout_depth):
+            output_list.append(T.dot(X_full, self.W[ii].T) + self.b[ii])
+            masked_output_list.append(T.dot(X_masked, self.W[ii].T) + self.b[ii])
 
-    self.parameter_updates = [(self.W, self.W + W_update / T.sqrt(self.W_gradient_sums + T.sqr(self.g_W)) - parameters.reg_strength * self.W),
-                              (self.b, self.b + b_update / T.sqrt(self.b_gradient_sums + T.sqr(self.g_b)) - parameters.reg_strength * self.b),
-                              (self.W_gradient_sums, parameters.rms_decay_rate * self.W_gradient_sums + parameters.rms_injection_rate * T.sqr(W_update / parameters.learning_rate)),
-                              (self.b_gradient_sums, parameters.rms_decay_rate * self.b_gradient_sums + parameters.rms_injection_rate * T.sqr(b_update / parameters.learning_rate))]
-
-    if parameters.use_nesterov_momentum:
-      self.parameter_updates.append((self.W_gradient_velocity, parameters.momentum_decay_rate * self.W_gradient_velocity - parameters.learning_rate * self.g_W))
-      self.parameter_updates.append((self.b_gradient_velocity, parameters.momentum_decay_rate * self.b_gradient_velocity - parameters.learning_rate * self.g_b))
-
-  #######################################################################################################################
-  #######################################################################################################################
-
-  def predict(self, X_test):
-    return T.dot(X_test, self.W) + self.b
-
-  #######################################################################################################################
-
+        self.output, self.masked_output = self.activation_function(output_list, masked_output_list)
